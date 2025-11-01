@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter"],
+      "Resource": "arn:aws:ssm:*:*:parameter/mcp_server/*/runtime/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue"],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:mcp_server/*/cognito/credentials*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["cognito-idp:InitiateAuth"],
+      "Resource": "*"
+    }
+  ]
+}
