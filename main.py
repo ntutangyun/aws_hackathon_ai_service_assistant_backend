@@ -57,9 +57,19 @@ async def startup_event():
 
 
 # Request/Response models
+class MessageContent(BaseModel):
+    """Message content model."""
+    text: str
+
+class ConversationMessage(BaseModel):
+    """Conversation message model."""
+    role: str  # "user" or "assistant"
+    content: list[MessageContent]
+
 class ChatRequest(BaseModel):
     """Chat request model."""
-    message: str
+    message: Optional[str] = None  # For backward compatibility
+    messages: Optional[list[ConversationMessage]] = None  # New conversation history format
     session_id: Optional[str] = None
     enable_trace: bool = False
 
@@ -183,20 +193,44 @@ async def chat(request: ChatRequest):
     Send a message to the AI agent and receive a response.
 
     Args:
-        request: ChatRequest containing the user message and optional session ID
+        request: ChatRequest containing the user message(s) and optional session ID
 
     Returns:
         ChatResponse with the agent's response and session information
     """
     try:
-        logger.info(f"Received chat request: {request.message[:50]}...")
+        # Handle both old format (single message) and new format (messages array)
+        if request.messages:
+            # New format: full conversation history
+            # Convert to dict format for the agent
+            messages_dict = [
+                {
+                    "role": msg.role,
+                    "content": [{"text": content.text} for content in msg.content]
+                }
+                for msg in request.messages
+            ]
+            logger.info(f"Received chat request with {len(messages_dict)} messages in conversation history")
+            logger.info(f"Latest message: {messages_dict[-1]['content'][0]['text'][:50]}...")
 
-        # Invoke the Bedrock agent
-        result = await bedrock_service.invoke_agent(
-            user_message=request.message,
-            session_id=request.session_id,
-            enable_trace=request.enable_trace
-        )
+            # Invoke the Bedrock agent with full conversation history
+            result = await bedrock_service.invoke_agent(
+                messages=messages_dict,
+                session_id=request.session_id,
+                enable_trace=request.enable_trace
+            )
+        elif request.message:
+            # Old format: single message (for backward compatibility)
+            logger.info(f"Received chat request (legacy format): {request.message[:50]}...")
+
+            # Invoke the Bedrock agent with single message
+            result = await bedrock_service.invoke_agent(
+                user_message=request.message,
+                session_id=request.session_id,
+                enable_trace=request.enable_trace
+            )
+        else:
+            raise HTTPException(status_code=400, detail="Either 'message' or 'messages' must be provided")
 
         return ChatResponse(
             response=result["response"],

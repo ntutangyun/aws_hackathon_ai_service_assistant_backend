@@ -108,17 +108,19 @@ class BedrockAgentCoreService:
 
     async def invoke_agent(
         self,
-        user_message: str,
+        user_message: str = None,
+        messages: list = None,
         session_id: str = None,
         enable_trace: bool = False
     ) -> Dict[str, Any]:
         """
-        Invoke Bedrock AgentCore with a user message.
+        Invoke Bedrock AgentCore with a user message or conversation history.
 
         All AWS resources (ARN, credentials, token) are fetched fresh on each request.
 
         Args:
-            user_message: The user's input message
+            user_message: The user's input message (legacy format)
+            messages: Full conversation history in format [{"role": "user|assistant", "content": [{"text": "..."}]}]
             session_id: Optional session ID for conversation continuity (not used in current API)
             enable_trace: Whether to enable trace information (not used in current API)
 
@@ -151,10 +153,22 @@ class BedrockAgentCoreService:
                 'Authorization': f'Bearer {access_token}',
                 'Content-Type': 'application/json'
             }
-            payload = {"prompt": user_message}
 
-            logger.info(f"Invoking agent at: {url}")
-            logger.info(f"User prompt: {user_message[:100]}...")
+            # Construct payload based on input format
+            if messages:
+                # New format: full conversation history
+                payload = {"messages": messages}
+                logger.info(f"Invoking agent at: {url}")
+                logger.info(f"Sending conversation with {len(messages)} messages")
+                logger.info(f"Latest message: {messages[-1]['content'][0]['text'][:100]}...")
+            elif user_message:
+                # Legacy format: single prompt
+                payload = {"prompt": user_message}
+                logger.info(f"Invoking agent at: {url}")
+                logger.info(f"User prompt: {user_message[:100]}...")
+            else:
+                raise ValueError("Either user_message or messages must be provided")
+
             logger.debug(f"Request headers: {headers}")
             logger.debug(f"Request payload: {payload}")
 
