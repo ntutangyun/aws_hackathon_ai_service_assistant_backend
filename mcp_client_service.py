@@ -32,29 +32,42 @@ class MCPClientService:
 
     def __init__(self):
         self.region = settings.aws_region
-        self.ssm_client = boto3.client('ssm', region_name=self.region)
-        self.secrets_client = boto3.client('secretsmanager', region_name=self.region)
-        self.cognito_client = boto3.client('cognito-idp', region_name=self.region)
+        self.environment = settings.environment
         self.timeout = 120
+
+        # Initialize AWS clients only if in production
+        if self.environment == "production":
+            self.ssm_client = boto3.client('ssm', region_name=self.region)
+            self.secrets_client = boto3.client('secretsmanager', region_name=self.region)
+            self.cognito_client = boto3.client('cognito-idp', region_name=self.region)
+        else:
+            self.ssm_client = None
+            self.secrets_client = None
+            self.cognito_client = None
 
         # MCP server configurations
         self.mcp_servers = {
             'udm': {
                 'name': 'UDM_mcp_server',
                 'description': 'User subscription and data management',
-                'ssm_prefix': '/mcp_server/udm'
+                'ssm_prefix': '/mcp_server/udm',
+                'local_port': settings.local_udm_port
             },
             'edge_server': {
                 'name': 'edge_server_mcp_server',
                 'description': 'Edge infrastructure management',
-                'ssm_prefix': '/mcp_server/edge_server'
+                'ssm_prefix': '/mcp_server/edge_server',
+                'local_port': settings.local_edge_server_port
             },
             'ai_service': {
                 'name': 'edge_ai_service_repository_mcp_server',
                 'description': 'AI service catalog',
-                'ssm_prefix': '/mcp_server/ai_service'
+                'ssm_prefix': '/mcp_server/ai_service',
+                'local_port': settings.local_ai_service_port
             }
         }
+
+        logger.info(f"🌍 MCPClientService initialized in {self.environment.upper()} mode")
 
     def _get_mcp_credentials(self, server_key: str) -> Dict[str, str]:
         """
@@ -128,21 +141,33 @@ class MCPClientService:
             async with mcp_service.connect_to_mcp('udm') as session:
                 result = await session.call_tool('get_all_subscriptions', {})
         """
-        credentials = self._get_mcp_credentials(server_key)
-        agent_arn = credentials['agent_arn']
-        bearer_token = credentials['bearer_token']
+        server_config = self.mcp_servers[server_key]
 
-        # Encode ARN for URL
-        encoded_arn = agent_arn.replace(':', '%3A').replace('/', '%2F')
-        mcp_url = f"https://bedrock-agentcore.{self.region}.amazonaws.com/runtimes/{encoded_arn}/invocations?qualifier=DEFAULT"
+        if self.environment == "local":
+            # Local development: connect to localhost MCP servers
+            mcp_url = f"http://localhost:{server_config['local_port']}/mcp/v1/transports/streamable-http"
+            headers = {"Content-Type": "application/json"}
 
-        headers = {
-            "authorization": f"Bearer {bearer_token}",
-            "Content-Type": "application/json"
-        }
+            logger.info(f"🏠 Connecting to LOCAL MCP server: {server_config['name']}")
+            logger.info(f"   URL: {mcp_url}")
 
-        logger.info(f"Connecting to MCP server: {self.mcp_servers[server_key]['name']}")
-        logger.debug(f"MCP URL: {mcp_url}")
+        else:
+            # Production: connect to AWS AgentCore Runtime
+            credentials = self._get_mcp_credentials(server_key)
+            agent_arn = credentials['agent_arn']
+            bearer_token = credentials['bearer_token']
+
+            # Encode ARN for URL
+            encoded_arn = agent_arn.replace(':', '%3A').replace('/', '%2F')
+            mcp_url = f"https://bedrock-agentcore.{self.region}.amazonaws.com/runtimes/{encoded_arn}/invocations?qualifier=DEFAULT"
+
+            headers = {
+                "authorization": f"Bearer {bearer_token}",
+                "Content-Type": "application/json"
+            }
+
+            logger.info(f"☁️  Connecting to AWS MCP server: {server_config['name']}")
+            logger.debug(f"   MCP URL: {mcp_url}")
 
         async with streamablehttp_client(
             mcp_url,

@@ -1,110 +1,51 @@
-import boto3
-import json
-import requests
-import urllib.parse
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from config import settings
 
 logger = logging.getLogger(__name__)
 
+# Import agent services based on environment
+if settings.environment == "local":
+    try:
+        from local_agent_service import local_agent_service
+        if local_agent_service is not None:
+            logger.info("✅ Local agent service imported and initialized successfully")
+        else:
+            logger.error("❌ Local agent service imported but is None - initialization may have failed")
+        cloud_agent_service = None
+    except Exception as e:
+        logger.error(f"❌ Failed to import local agent service: {e}")
+        import traceback
+        traceback.print_exc()
+        local_agent_service = None
+        cloud_agent_service = None
+else:
+    local_agent_service = None
+    try:
+        from cloud_agent_service import cloud_agent_service
+        if cloud_agent_service is not None:
+            logger.info("✅ Cloud agent service imported and initialized successfully")
+        else:
+            logger.error("❌ Cloud agent service imported but is None - initialization may have failed")
+    except Exception as e:
+        logger.error(f"❌ Failed to import cloud agent service: {e}")
+        import traceback
+        traceback.print_exc()
+        cloud_agent_service = None
+
 
 class BedrockAgentCoreService:
-    """Service for interacting with AWS Bedrock AgentCore Runtime API."""
+    """
+    Service for routing agent invocations to local or cloud agent services.
+
+    This is now a lightweight router that delegates to:
+    - local_agent_service (when ENVIRONMENT=local)
+    - cloud_agent_service (when ENVIRONMENT=production)
+    """
 
     def __init__(self):
-        """Initialize AWS clients and configuration."""
-        self.region = settings.aws_region
-        self.agent_name = settings.agent_name
-        self.timeout = settings.request_timeout_seconds
-
-        # Initialize AWS clients for SSM and Secrets Manager
-        self.ssm_client = boto3.client('ssm', region_name=self.region)
-        self.secrets_client = boto3.client('secretsmanager', region_name=self.region)
-        self.cognito_client = boto3.client('cognito-idp', region_name=self.region)
-
-        # NO CACHING - everything fetched fresh per request
-
-    def _get_agent_arn(self) -> str:
-        """
-        Get agent ARN from SSM Parameter Store (fetched fresh each time).
-
-        Returns:
-            Agent ARN string
-        """
-        try:
-            param_name = f'/agent/{self.agent_name}/runtime/agent_arn'
-            logger.debug(f"Fetching agent ARN from SSM: {param_name}")
-            response = self.ssm_client.get_parameter(
-                Name=param_name
-            )
-            agent_arn = response["Parameter"]["Value"]
-            logger.debug(f"Agent ARN retrieved: {agent_arn}")
-            return agent_arn
-        except Exception as e:
-            logger.error(f"Failed to get agent ARN from SSM: {e}")
-            raise
-
-    def _get_cognito_credentials(self) -> Dict[str, str]:
-        """
-        Get Cognito credentials from Secrets Manager (fetched fresh each time).
-
-        Returns:
-            Dict with client_id, username, and password for Cognito authentication
-        """
-        try:
-            secret_name = f'/agent/{self.agent_name}/cognito/credentials'
-            logger.debug(f"Fetching Cognito credentials from Secrets Manager: {secret_name}")
-            secret = self.secrets_client.get_secret_value(
-                SecretId=secret_name
-            )
-            cognito_creds = json.loads(secret['SecretString'])
-
-            return {
-                'client_id': cognito_creds['client_id'],
-                'username': cognito_creds.get('username', 'testuser'),
-                'password': cognito_creds.get('password', 'MyPassword123!'),
-                'pool_id': cognito_creds.get('pool_id'),
-                'discovery_url': cognito_creds.get('discovery_url')
-            }
-
-        except Exception as e:
-            logger.error(f"Failed to get Cognito credentials from Secrets Manager: {e}")
-            raise
-
-    def _get_fresh_token(self) -> str:
-        """
-        Authenticate with Cognito to get a FRESH token on each request.
-
-        This matches the approach in test_agent.py which authenticates
-        with username/password to get a fresh token every time.
-
-        Returns:
-            Fresh access token string from Cognito
-        """
-        try:
-            credentials = self._get_cognito_credentials()
-
-            logger.debug("Authenticating with Cognito to get fresh token...")
-
-            # Authenticate with Cognito using username/password
-            # This matches test_agent.py approach
-            auth_response = self.cognito_client.initiate_auth(
-                ClientId=credentials['client_id'],
-                AuthFlow='USER_PASSWORD_AUTH',
-                AuthParameters={
-                    'USERNAME': credentials.get('username', 'testuser'),
-                    'PASSWORD': credentials.get("password", 'MyPassword123!')
-                }
-            )
-
-            access_token = auth_response['AuthenticationResult']['AccessToken']
-            logger.debug("✓ Fresh token obtained from Cognito")
-            return access_token
-
-        except Exception as e:
-            logger.error(f"Cognito authentication failed: {e}")
-            raise
+        """Initialize the service router."""
+        logger.info("BedrockAgentCoreService initialized as agent router")
 
     async def invoke_agent(
         self,
@@ -116,7 +57,7 @@ class BedrockAgentCoreService:
         """
         Invoke Bedrock AgentCore with a user message or conversation history.
 
-        All AWS resources (ARN, credentials, token) are fetched fresh on each request.
+        Routes to local agent (ENVIRONMENT=local) or AWS AgentCore Runtime (ENVIRONMENT=production).
 
         Args:
             user_message: The user's input message (legacy format)
@@ -128,132 +69,39 @@ class BedrockAgentCoreService:
             Dict containing the agent's response and metadata
         """
         try:
-            # Generate session ID for consistency
+            # Generate session ID if not provided
             if not session_id:
                 import uuid
                 session_id = str(uuid.uuid4())
 
-            logger.info("Fetching all AWS resources fresh for this request...")
+            # Route to local agent if in local mode
+            if settings.environment == "local":
+                if local_agent_service is None:
+                    raise Exception("Local agent service not available. Check if strands is installed and MCP servers are running.")
 
-            # Fetch agent ARN from SSM (fresh each request)
-            agent_arn = self._get_agent_arn()
+                logger.info("🏠 Using local agent service")
+                return await local_agent_service.invoke_agent(
+                    user_message=user_message,
+                    messages=messages,
+                    session_id=session_id
+                )
 
-            # Fetch Cognito credentials from Secrets Manager (fresh each request)
-            # This also gets the fresh bearer token
-            access_token = self._get_fresh_token()
+            # Otherwise use cloud agent service (production mode)
+            logger.info("☁️ Using cloud agent service with AWS AgentCore Runtime MCP servers")
+            if cloud_agent_service is None:
+                raise Exception("Cloud agent service not available. Check AWS credentials and MCP server deployment.")
 
-            logger.info("✓ All AWS resources fetched successfully")
-
-            # Construct API URL
-            encoded_arn = urllib.parse.quote(agent_arn, safe='')
-            url = f"https://bedrock-agentcore.{self.region}.amazonaws.com/runtimes/{encoded_arn}/invocations"
-
-            # Prepare request
-            headers = {
-                'Authorization': f'Bearer {access_token}',
-                'Content-Type': 'application/json'
-            }
-
-            # Construct payload based on input format
-            if messages:
-                # New format: full conversation history
-                payload = {"messages": messages}
-                logger.info(f"Invoking agent at: {url}")
-                logger.info(f"Sending conversation with {len(messages)} messages")
-                logger.info(f"Latest message: {messages[-1]['content'][0]['text'][:100]}...")
-            elif user_message:
-                # Legacy format: single prompt
-                payload = {"prompt": user_message}
-                logger.info(f"Invoking agent at: {url}")
-                logger.info(f"User prompt: {user_message[:100]}...")
-            else:
-                raise ValueError("Either user_message or messages must be provided")
-
-            logger.debug(f"Request headers: {headers}")
-            logger.debug(f"Request payload: {payload}")
-
-            # Make request
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=self.timeout
+            return await cloud_agent_service.invoke_agent(
+                user_message=user_message,
+                messages=messages,
+                session_id=session_id
             )
 
-            logger.info(f"Response status: {response.status_code}")
+            # Legacy HTTP API code path (no longer used)
+            # Now using cloud_agent_service which connects to MCP servers directly
 
-            # Check for errors before raising
-            if response.status_code != 200:
-                logger.error(f"Error response body: {response.text}")
-                response.raise_for_status()
-
-            # Parse response
-            if response.status_code == 200:
-                response_data = response.json()
-
-                # Extract text from various response formats
-                response_text = None
-
-                if isinstance(response_data, str):
-                    response_text = response_data
-                elif isinstance(response_data, dict):
-                    # Format 1: AgentCore response with content array
-                    # {"role": "assistant", "content": [{"text": "..."}]}
-                    if 'content' in response_data and isinstance(response_data['content'], list):
-                        if len(response_data['content']) > 0 and isinstance(response_data['content'][0], dict):
-                            response_text = response_data['content'][0].get('text', '')
-
-                    # Format 2: Direct text fields
-                    if not response_text:
-                        response_text = (
-                            response_data.get('response') or
-                            response_data.get('output') or
-                            response_data.get('text') or
-                            json.dumps(response_data)
-                        )
-                else:
-                    response_text = str(response_data)
-
-                logger.info(f"Extracted response text (first 100 chars): {response_text[:100]}...")
-
-                return {
-                    "response": response_text,
-                    "session_id": session_id,
-                    "trace": None,
-                    "success": True
-                }
-            else:
-                raise Exception(f"Unexpected status code: {response.status_code}")
-
-        except requests.exceptions.HTTPError as e:
-            # HTTP error with response body
-            error_detail = str(e)
-            if hasattr(e, 'response') and e.response is not None:
-                try:
-                    error_body = e.response.json()
-                    error_detail = f"{str(e)} - Response: {json.dumps(error_body)}"
-                except:
-                    error_detail = f"{str(e)} - Response: {e.response.text}"
-
-            logger.error(f"HTTP error: {error_detail}")
-            return {
-                "response": f"Error invoking agent: {error_detail}",
-                "session_id": session_id,
-                "trace": None,
-                "success": False,
-                "error": error_detail
-            }
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error: {e}")
-            return {
-                "response": f"Error invoking agent: {str(e)}",
-                "session_id": session_id,
-                "trace": None,
-                "success": False,
-                "error": str(e)
-            }
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
+            logger.error(f"Error invoking agent: {e}")
             return {
                 "response": f"Error invoking agent: {str(e)}",
                 "session_id": session_id,
@@ -268,10 +116,7 @@ class BedrockAgentCoreService:
         session_id: str = None
     ):
         """
-        Invoke Bedrock agent with streaming response.
-
-        Note: Streaming may not be supported by AgentCore Runtime API.
-        This method falls back to regular invocation.
+        Invoke agent with streaming response (falls back to regular invocation).
 
         Args:
             user_message: The user's input message
@@ -280,7 +125,9 @@ class BedrockAgentCoreService:
         Yields:
             Response chunks
         """
-        # AgentCore API may not support streaming, so we invoke and return the full response
+        import json
+
+        # Invoke and return the full response as a stream
         result = await self.invoke_agent(user_message, session_id)
 
         if result["success"]:

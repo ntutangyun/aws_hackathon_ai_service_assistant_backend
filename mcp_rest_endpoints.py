@@ -38,8 +38,24 @@ async def get_all_subscriptions(status: Optional[str] = Query(None)):
             {'status': status} if status else {}
         )
 
+        # Debug logging
+        logger.info(f"🔍 DEBUG - Raw MCP result type: {type(result)}")
+        logger.info(f"🔍 DEBUG - Raw MCP result (first 500 chars): {str(result)[:500]}")
+
         # Parse result
         parsed_result = json.loads(result) if isinstance(result, str) else result
+
+        # More debug logging
+        logger.info(f"🔍 DEBUG - Parsed result type: {type(parsed_result)}")
+        if isinstance(parsed_result, list):
+            logger.info(f"🔍 DEBUG - Parsed result is a LIST with {len(parsed_result)} items")
+            for i, item in enumerate(parsed_result):
+                logger.info(f"🔍 DEBUG - Item {i}: subscriberId={item.get('subscriberId')}, name={item.get('subscriberName')}")
+        elif isinstance(parsed_result, dict):
+            logger.info(f"🔍 DEBUG - Parsed result is a DICT with keys: {list(parsed_result.keys())}")
+        else:
+            logger.info(f"🔍 DEBUG - Parsed result is unexpected type: {type(parsed_result)}")
+
         return parsed_result
 
     except Exception as e:

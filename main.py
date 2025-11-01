@@ -47,10 +47,22 @@ async def startup_event():
     logger.info("=" * 60)
     logger.info("Starting AI Service Assistant Backend")
     logger.info("=" * 60)
-    logger.info("Auth Mode: Fully Dynamic (no caching)")
-    logger.info("- Agent ARN: Fetched from SSM per request")
-    logger.info("- Cognito Creds: Fetched from Secrets Manager per request")
-    logger.info("- Bearer Token: Fetched fresh per request")
+    logger.info(f"Environment: {settings.environment.upper()}")
+
+    if settings.environment == "local":
+        logger.info("🏠 LOCAL MODE - Using localhost resources")
+        logger.info("🤖 Local Agent: Running Strands agent in-process")
+        logger.info("📡 MCP Servers:")
+        logger.info(f"   - UDM Server: http://localhost:{settings.local_udm_port}")
+        logger.info(f"   - Edge Server: http://localhost:{settings.local_edge_server_port}")
+        logger.info(f"   - AI Service: http://localhost:{settings.local_ai_service_port}")
+    else:
+        logger.info("☁️  PRODUCTION MODE - Using AWS AgentCore Runtime")
+        logger.info("Auth Mode: Fully Dynamic (no caching)")
+        logger.info("- Agent ARN: Fetched from SSM per request")
+        logger.info("- Cognito Creds: Fetched from Secrets Manager per request")
+        logger.info("- Bearer Token: Fetched fresh per request")
+
     logger.info("=" * 60)
     logger.info("Server ready to accept requests")
     logger.info("=" * 60)
@@ -99,92 +111,6 @@ async def health_check():
         "auth_mode": "fully-dynamic",
         "caching": "disabled"
     }
-
-
-# Test endpoint for oran_agent
-@app.get("/test-agent")
-async def test_agent():
-    """
-    Test endpoint to verify oran_agent connectivity.
-    Uses a predefined test prompt to check if the agent responds correctly.
-
-    Returns:
-        Test result with agent response
-    """
-    try:
-        # Test prompt
-        test_prompt = "Using the O2 interface, do I have any O-Cloud resources supplied by Intel?"
-
-        logger.info("Testing oran_agent with predefined prompt...")
-
-        # Invoke the agent (authentication happens per request)
-        result = await bedrock_service.invoke_agent(
-            user_message=test_prompt,
-            session_id="test-session",
-            enable_trace=False
-        )
-
-        if result["success"]:
-            return {
-                "status": "success",
-                "test_prompt": test_prompt,
-                "agent_response": result["response"],
-                "session_id": result["session_id"],
-                "message": "✓ Agent responded successfully"
-            }
-        else:
-            return {
-                "status": "error",
-                "test_prompt": test_prompt,
-                "error": result.get("error", "Unknown error"),
-                "message": "✗ Agent invocation failed"
-            }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error testing agent: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# Custom test endpoint with user-provided prompt
-@app.post("/test-agent")
-async def test_agent_custom(request: ChatRequest):
-    """
-    Test endpoint with custom prompt.
-    Similar to /chat but designed for testing purposes.
-
-    Args:
-        request: ChatRequest containing the test message
-
-    Returns:
-        Test result with agent response
-    """
-    try:
-        logger.info(f"Testing oran_agent with custom prompt: {request.message[:50]}...")
-
-        # Invoke the agent (authentication happens per request)
-        result = await bedrock_service.invoke_agent(
-            user_message=request.message,
-            session_id=request.session_id or "test-session",
-            enable_trace=request.enable_trace
-        )
-
-        return {
-            "status": "success" if result["success"] else "error",
-            "test_prompt": request.message,
-            "agent_response": result["response"],
-            "session_id": result["session_id"],
-            "success": result["success"],
-            "error": result.get("error")
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error testing agent: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 
 # Chat endpoint
 @app.post("/chat", response_model=ChatResponse)
