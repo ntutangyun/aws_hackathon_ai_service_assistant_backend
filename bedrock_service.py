@@ -63,7 +63,7 @@ class BedrockAgentCoreService:
             return {
                 'client_id': cognito_creds['client_id'],
                 'username': cognito_creds.get('username', 'testuser'),
-                'password': cognito_creds['password'],
+                'password': cognito_creds.get('password', 'MyPassword123!'),
                 'pool_id': cognito_creds.get('pool_id'),
                 'discovery_url': cognito_creds.get('discovery_url')
             }
@@ -93,8 +93,8 @@ class BedrockAgentCoreService:
                 ClientId=credentials['client_id'],
                 AuthFlow='USER_PASSWORD_AUTH',
                 AuthParameters={
-                    'USERNAME': credentials['username'],
-                    'PASSWORD': credentials['password']
+                    'USERNAME': credentials.get('username', 'testuser'),
+                    'PASSWORD': credentials.get("password", 'MyPassword123!')
                 }
             )
 
@@ -177,19 +177,30 @@ class BedrockAgentCoreService:
             if response.status_code == 200:
                 response_data = response.json()
 
-                # The response format may vary, handle both string and dict responses
+                # Extract text from various response formats
+                response_text = None
+
                 if isinstance(response_data, str):
                     response_text = response_data
                 elif isinstance(response_data, dict):
-                    # Try common response field names
-                    response_text = (
-                        response_data.get('response') or
-                        response_data.get('output') or
-                        response_data.get('text') or
-                        json.dumps(response_data)
-                    )
+                    # Format 1: AgentCore response with content array
+                    # {"role": "assistant", "content": [{"text": "..."}]}
+                    if 'content' in response_data and isinstance(response_data['content'], list):
+                        if len(response_data['content']) > 0 and isinstance(response_data['content'][0], dict):
+                            response_text = response_data['content'][0].get('text', '')
+
+                    # Format 2: Direct text fields
+                    if not response_text:
+                        response_text = (
+                            response_data.get('response') or
+                            response_data.get('output') or
+                            response_data.get('text') or
+                            json.dumps(response_data)
+                        )
                 else:
                     response_text = str(response_data)
+
+                logger.info(f"Extracted response text (first 100 chars): {response_text[:100]}...")
 
                 return {
                     "response": response_text,

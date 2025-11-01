@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # Bedrock AgentCore Configuration
     # Agent name is used to construct SSM/Secrets Manager paths
-    agent_name: str = "oran_agent"
+    agent_name: str = "ai_assistant_agent"
 
     # Request timeout
     request_timeout_seconds: int = 300
