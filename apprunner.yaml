@@ -2,17 +2,12 @@ version: 1.0
 runtime: python3
 build:
   commands:
-    pre-build:
-      - echo "Installing dependencies for AI Service Assistant Backend"
     build:
       - pip install --no-cache-dir -r requirements.txt
-    post-build:
-      - echo "Build completed successfully"
 run:
   command: uvicorn main:app --host 0.0.0.0 --port 8000
   network:
     port: 8000
-    env: vpc-connector  # Optional: if you need VPC access
   env:
     - name: AWS_REGION
       value: us-east-1
