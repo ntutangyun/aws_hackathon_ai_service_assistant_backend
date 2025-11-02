@@ -23,7 +23,7 @@ logging.getLogger('bedrock_service').setLevel(logging.DEBUG)
 # Initialize FastAPI app
 app = FastAPI(
     title="AI Service Assistant",
-    description="Backend API for chatbot powered by AWS Bedrock",
+    description="Backend API for chatbot powered by AWS",
     version="1.0.0"
 )
 
