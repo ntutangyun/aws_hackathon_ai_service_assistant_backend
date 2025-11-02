@@ -55,7 +55,7 @@ class CloudAgentService:
             Dict with client_id, username, and password for Cognito authentication
         """
         try:
-            secret_name = f'/mcp/{server_type}/cognito/credentials'
+            secret_name = f'mcp_server/{server_type}/cognito/credentials'
             logger.debug(f"Fetching Cognito credentials from Secrets Manager: {secret_name}")
             secret = self.secrets_client.get_secret_value(SecretId=secret_name)
             cognito_creds = json.loads(secret['SecretString'])
@@ -81,12 +81,19 @@ class CloudAgentService:
             MCP server URL
         """
         try:
-            param_name = f'/mcp/{server_type}/runtime/url'
-            logger.debug(f"Fetching MCP server URL from SSM: {param_name}")
-            response = self.ssm_client.get_parameter(Name=param_name)
-            url = response["Parameter"]["Value"]
-            logger.debug(f"MCP server URL retrieved: {url}")
-            return url
+            # param_name = f'/mcp_server/{server_type}/runtime/url'
+            # logger.debug(f"Fetching MCP server URL from SSM: {param_name}")
+            # response = self.ssm_client.get_parameter(Name=param_name)
+            # url = response["Parameter"]["Value"]
+            # logger.debug(f"MCP server URL retrieved: {url}")
+
+            agent_arn_response = self.ssm_client.get_parameter(Name=f'/mcp_server/{server_type}/runtime/agent_arn')
+            agent_arn = agent_arn_response['Parameter']['Value']
+            print(f"Retrieved Agent ARN: {agent_arn}")
+            encoded_arn = agent_arn.replace(':', '%3A').replace('/', '%2F')
+            mcp_url = f"https://bedrock-agentcore.{settings.aws_region}.amazonaws.com/runtimes/{encoded_arn}/invocations?qualifier=DEFAULT"
+
+            return mcp_url
         except Exception as e:
             logger.error(f"Failed to get MCP server URL for {server_type}: {e}")
             raise
